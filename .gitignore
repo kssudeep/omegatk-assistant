@@ -21,7 +21,7 @@ env/
 faiss_index/
 
 # VS Code
-.vscode/settings.json
+
 
 # Jupyter
 .ipynb_checkpoints/
