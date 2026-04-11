@@ -2,13 +2,15 @@
 rag/chain.py
 ------------
 Assembles the full RAG chain:
-  condense history → retrieve docs → generate answer
+  condense history -> retrieve docs -> generate answer
 
 Uses only langchain_core primitives (stable across langchain 0.2/0.3/1.x).
+Includes retry wrapper around the LLM call to handle transient API errors.
 """
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from langchain_core.output_parsers import StrOutputParser
@@ -20,16 +22,40 @@ from rag.prompts import make_condense_prompt, make_qa_prompt
 MMR_K = 8
 MMR_FETCH_K = 20
 
+# Retry settings for transient API errors
+_MAX_RETRIES = 3
+_RETRY_DELAY = 2.0  # seconds
+
+
+def _invoke_with_retry(chain, inputs: dict, max_retries: int = _MAX_RETRIES) -> str:
+    """
+    Invoke a LangChain chain with simple exponential-backoff retry.
+
+    Retries on any exception, waiting _RETRY_DELAY * attempt seconds
+    between tries. Raises the last exception if all attempts fail.
+    """
+    last_exc = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            return chain.invoke(inputs)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                wait = _RETRY_DELAY * attempt
+                print(f"[chain] Attempt {attempt} failed ({exc}); retrying in {wait}s...")
+                time.sleep(wait)
+    raise last_exc
+
 
 def build_rag_chain(vectorstore, llm) -> Any:
     """
     Build the two-step RAG chain.
 
-    Step 1 — condense_chain:
-        Collapses (chat_history + input) → standalone search query.
+    Step 1 - condense_chain:
+        Collapses (chat_history + input) -> standalone search query.
         Skipped when chat_history is empty (uses raw input directly).
 
-    Step 2 — rag_chain:
+    Step 2 - rag_chain:
         Retrieves k=8 docs via MMR, formats context, generates answer.
 
     Args:
@@ -51,10 +77,10 @@ def build_rag_chain(vectorstore, llm) -> Any:
     qa_prompt = make_qa_prompt()
     condense_chain = condense_prompt | llm | StrOutputParser()
 
-    def get_context(inputs: dict) -> tuple[str, list]:
+    def get_context(inputs: dict) -> tuple:
         """Retrieve relevant docs; condense history into query if present."""
         if inputs.get("chat_history"):
-            query = condense_chain.invoke(inputs)
+            query = _invoke_with_retry(condense_chain, inputs)
         else:
             query = inputs["input"]
         docs = base_retriever.invoke(query)
