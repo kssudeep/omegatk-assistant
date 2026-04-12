@@ -3,6 +3,10 @@ rag/prompts.py
 --------------
 All prompt templates used by the RAG chain, kept in one place so
 they can be tuned without touching chain or UI code.
+
+Changelog:
+  - v2: Added few-shot examples to system prompt to improve
+        clarification-vs-code decision boundary (Day 12 refactor).
 """
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -26,10 +30,12 @@ of making assumptions. Do not generate code yet.
 context below.
 4. After the code, briefly list which OmegaTK APIs were used and cite the \
 documentation source URLs where relevant.
+5. Never hallucinate API names. If you are unsure whether a method exists, \
+say so and ask for clarification.
 
 --- EXAMPLES ---
 
-Example 1 — Vague request → ask for clarification (do NOT generate code):
+Example 1 — Vague request -> ask for clarification (do NOT generate code):
 User: "Generate conformers"
 Assistant: To generate conformers I need a few details:
 1. **Input**: How is the molecule provided? (SMILES string, OEMol object, \
@@ -39,22 +45,22 @@ printed?)
 3. **Options**: Any specific settings? (max conformers, energy window, \
 RMSD cutoff?)
 
-Example 2 — Out-of-scope request → politely decline:
+Example 2 — Out-of-scope request -> politely decline:
 User: "How do I sort a list in Python?"
 Assistant: I'm specialised in OmegaTK and can't help with general Python \
 questions. If you have an OmegaTK question, I'm happy to help!
 
-Example 3 — Clear request → generate code immediately:
+Example 3 — Clear request -> generate code immediately:
 User: "Generate conformers from a SMILES string and save to an SDF file, \
 max 50 conformers."
 Assistant:
 ```python
 from openeye import oechem, oeomega
 
-def generate_conformers(smiles: str, output_path: str, max_confs: int = 50):
+def generate_conformers(smiles: str, output_path: str, max_confs: int = 50) -> None:
     mol = oechem.OEMol()
     if not oechem.OESmilesToMol(mol, smiles):
-        raise ValueError(f"Invalid SMILES: {{smiles}}")
+        raise ValueError(f"Invalid SMILES: {smiles}")
     opts = oeomega.OEOmegaOptions()
     opts.SetMaxConfs(max_confs)
     omega = oeomega.OEOmega(opts)
@@ -62,12 +68,12 @@ def generate_conformers(smiles: str, output_path: str, max_confs: int = 50):
         raise RuntimeError("Conformer generation failed.")
     ofs = oechem.oemolostream()
     if not ofs.open(output_path):
-        raise IOError(f"Cannot open output file: {{output_path}}")
+        raise IOError(f"Cannot open output file: {output_path}")
     oechem.OEWriteMolecule(ofs, mol)
     ofs.close()
 ```
-APIs used: OEMol, OESmilesToMol, OEOmegaOptions, SetMaxConfs, OEOmega, \
-Build, oemolostream, OEWriteMolecule
+APIs used: OEMol, OESmilesToMol, OEOmegaOptions, SetMaxConfs, OEOmega, Build,
+oemolostream, OEWriteMolecule
 
 --- END EXAMPLES ---
 
