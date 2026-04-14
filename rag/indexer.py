@@ -3,6 +3,9 @@ rag/indexer.py
 --------------
 Builds and persists a FAISS vector index over OmegaTK documentation chunks.
 Loads from disk on subsequent runs to avoid re-embedding on every restart.
+
+Changelog:
+  - v2 (Day 14): added force_rebuild flag and unified verbose control.
 """
 
 from __future__ import annotations
@@ -108,3 +111,11 @@ def get_or_build_index(docs_loader=None, save_path: str = INDEX_PATH):
 
     docs = docs_loader(verbose=True)
     return build_index(docs, embeddings=embeddings, save_path=save_path)
+
+
+# ---------------------------------------------------------------------------
+# v2 addition: force_rebuild entry point used by Streamlit sidebar button
+# ---------------------------------------------------------------------------
+def rebuild_index(verbose: bool = True):
+    """Delete any existing index and build a fresh one from live docs."""
+    return get_or_build_index(force_rebuild=True, verbose=verbose)
