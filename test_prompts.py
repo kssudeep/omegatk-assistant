@@ -79,11 +79,12 @@ TEST_CASES: list[TestCase] = [
         expected_type="code",
     ),
     TestCase(
-        id="T04",
-        category="OmegaOptions configuration",
-        prompt="How do I set the RMSD cutoff for conformer filtering in OmegaTK?",
-        must_contain=["OEOmegaOptions"],
-        expected_type="code",
+    id="T04",
+    category="OmegaOptions configuration",
+    prompt="How do I set the RMSD cutoff for conformer filtering in OmegaTK?",
+    must_contain=[],
+    must_not_contain=["```python"],   # should NOT hallucinate code it doesn't know
+    expected_type="any",
     ),
     TestCase(
         id="T05",
@@ -289,11 +290,19 @@ def evaluate(tc: TestCase, response: str, elapsed: float) -> TestResult:
 
 def run_tests() -> list[TestResult]:
     from langchain_core.messages import HumanMessage, AIMessage
+    import re
+
+    def extract_retry_seconds(error_msg: str, default: float = 65.0) -> float:
+        """Pull the 'retry in X.Xs' value out of a 429 error message."""
+        match = re.search(r"retry in ([0-9]+(?:\.[0-9]+)?)s", error_msg)
+        if match:
+            return float(match.group(1)) + 2  # add 2s buffer
+        return default
 
     rag_chain = build_rag_chain()
     results: list[TestResult] = []
 
-    for tc in TEST_CASES:
+    for i, tc in enumerate(TEST_CASES):
         print(f"\n{'='*60}")
         print(f"[{tc.id}] {tc.category}")
         print(f"Prompt: {tc.prompt[:80]}...")
@@ -304,16 +313,29 @@ def run_tests() -> list[TestResult]:
             for msg in (HumanMessage(content=human), AIMessage(content=ai))
         ]
 
-        t0 = time.time()
-        try:
-            result = rag_chain.invoke({
-                "input": tc.prompt,
-                "chat_history": history,
-            })
-            response = result.get("answer", "")
-        except Exception as e:
-            response = f"ERROR: {e}"
-        elapsed = time.time() - t0
+        # Retry loop — keeps retrying the same test until it succeeds
+        max_attempts = 5
+        response = ""
+        for attempt in range(1, max_attempts + 1):
+            t0 = time.time()
+            try:
+                result = rag_chain.invoke({
+                    "input": tc.prompt,
+                    "chat_history": history,
+                })
+                response = result.get("answer", "")
+                elapsed = time.time() - t0
+                break  # success — exit retry loop
+            except Exception as e:
+                response = f"ERROR: {e}"
+                elapsed = time.time() - t0
+
+            if "RESOURCE_EXHAUSTED" in response:
+                wait = extract_retry_seconds(response)
+                print(f"  ⏳ Rate limited (attempt {attempt}/{max_attempts}) — waiting {wait:.0f}s...")
+                time.sleep(wait)
+            else:
+                break  # non-rate-limit error — don't retry
 
         result = evaluate(tc, response, elapsed)
         results.append(result)
@@ -326,8 +348,12 @@ def run_tests() -> list[TestResult]:
         else:
             print("  ✓ All checks passed")
 
-    return results
+        # Small pause between tests to avoid immediately hitting the limit again
+        if i < len(TEST_CASES) - 1:
+            print("  ⏳ Pausing 5s before next test...")
+            time.sleep(5)
 
+    return results
 
 # ---------------------------------------------------------------------------
 # Report writer
